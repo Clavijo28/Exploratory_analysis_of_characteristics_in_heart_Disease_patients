@@ -1,0 +1,293 @@
+---
+title: "Assigment_1"
+output: html_document
+date: '2022-03-21'
+---
+
+```{r}
+
+# Lectura de datos
+
+#install.packages("readxl")
+#file.choose()
+library(readxl)
+setwd("C:/Users/Christian/Desktop/Master of Data Science/Second Semester/Predictive Analisys/Assignment_1")
+getwd()
+
+heart.CSV <- read.csv("heart.csv")
+heart.data <- subset(heart.CSV, select = -c(id))
+summary(heart.data)
+
+```
+```{r}
+
+# Imputacion de datos faltantes
+
+library(mice)
+library(VIM)
+
+missing.plot <- aggr(heart.data, col=c("navyblue", "yellow"),
+numbers = TRUE, sortVars = TRUE,
+lables=names(data.mis), cex.axis=.6,
+gap=3, ylab=c("Missing data", "Pattern"))
+
+md.pattern(heart.data, rotate.names = TRUE)
+
+
+```
+```{r}
+
+# Histogramas datos numericos
+
+#install.packages("mosaicData")
+library(tidyverse)
+library(skimr)
+library(DataExplorer)
+library(ggpubr)
+library(univariateML)
+library(GGally)
+library(mosaicData)
+library(viridis)
+library(hrbrthemes)
+
+skim(heart.data)
+
+data.num.long <- gather(heart.data[, c(4, 5, 8, 10, 12)], metric, value, trestbps:thalach, factor_key=TRUE)
+
+num.plot <- data.num.long %>%
+ mutate(text = fct_reorder(metric, value)) %>%
+ ggplot( aes(x=value, color=metric, fill=metric)) +
+ geom_histogram(alpha=0.6, binwidth = 5) +
+ scale_fill_viridis(discrete=TRUE) +
+ scale_color_viridis(discrete=TRUE) +
+ theme_ipsum() +
+ theme(
+ legend.position="none",
+ panel.spacing = unit(0.1, "lines"),
+ strip.text.x = element_text(size = 8)
+ ) +
+ xlab("") +
+ ylab("Metric values") +
+ facet_wrap(~metric)
+
+num.plot
+
+```
+
+```{r}
+
+# Escogencia varibles relevantes en el modelo
+
+set.seed(999)
+library(mlr3)
+library(mlr3filters)
+library(mlr3learners)
+library(mlr3viz)
+library(mlr3pipelines)
+
+heart.data$sex <- as.factor(heart.data$sex)
+heart.data$cp <- as.factor(heart.data$cp)
+heart.data$chol <- as.numeric(heart.data$chol)
+heart.data$fbs <- as.factor(heart.data$fbs)
+heart.data$restecg <- as.factor(heart.data$restecg)
+heart.data$exang <- as.factor(heart.data$exang)
+heart.data$slope <- as.factor(heart.data$slope)
+heart.data$major_vessels <- as.numeric(heart.data$major_vessels)
+heart.data$restwm <- as.factor(heart.data$restwm)
+heart.data$target <- as.factor(heart.data$target)
+heart.data$oldpeak <- as.numeric(heart.data$oldpeak)
+heart.data$thalach <- as.numeric(heart.data$thalach)
+
+filter.importance = flt("information_gain")
+
+task_heart = as_task_classif(heart.data, target = "target", id = "heart")
+heart.feature.importance <- filter.importance$calculate(task_heart)
+as.data.table(heart.feature.importance)
+
+print(task_heart)
+
+
+
+autoplot(heart.feature.importance)
+
+
+
+po = po("filter", filter.importance, filter.nfeat=6)
+filtered.task = po$train(list(task_heart))[[1]]
+filtered.task$feature_names
+
+target.filtered = subset(heart.data, select = filtered.task$feature_names)
+head(target.filtered)
+
+library(GGally)
+
+ggpairs(heart.data, columns = c(3,9), ggplot2::aes(colour=target))
+
+```
+
+
+```{r}
+
+# Revisar debido a que la variables de respuesta es categorica, no hay modo de comparar
+
+data_filtered <- target.filtered %>%
+         mutate(
+           log_oldpeak     = log10(oldpeak),
+           log_thalach = log10(thalach),
+           log_major_major_vessels = log10(major_vessels)
+         )
+
+custom_corr_plot <- function(variable1, variable2, df, alpha=0.3){
+  p <- df %>%
+       mutate(
+         # Truco para que se ponga el título estilo facet
+        title = paste(toupper(variable2), "vs", toupper(variable1))
+       ) %>%
+       ggplot(aes(x = !!sym(variable1), y = !!sym(variable2))) + 
+       geom_point(alpha = alpha) +
+       # Tendencia no lineal
+       geom_smooth(se = FALSE, method = "gam", formula =  y ~ splines::bs(x, 3)) +
+       # Tendencia lineal
+       geom_smooth(se = FALSE, method = "lm", color = "firebrick") +
+       facet_grid(. ~ title) +
+       theme_bw() +
+       theme(strip.text = element_text(colour = "black", size = 8, face = 2),
+             axis.title = element_blank())
+  return(p)
+}
+
+continuous_variables <- c("thalach", "oldpeak","major_vessels")
+
+plots <- map(
+            .x = continuous_variables,
+            .f = custom_corr_plot,
+            variable2 = "target",
+            df = heart.data
+         )
+
+ggarrange(plotlist = plots, ncol = 3, nrow = 3) %>%
+  annotate_figure(
+    top = text_grob("Correlación con precio", face = "bold", size = 16,
+                    x = 0.20)
+  )
+
+```
+
+
+
+
+
+```{r}
+
+# Evaluacion de variables continuas
+
+data.numeric <- heart.data %>% select(thalach, oldpeak, major_vessels,trestbps,chol,age)
+data.num.chc <- heart.data %>% select(thalach, oldpeak, major_vessels,trestbps,chol,age)
+data.num.chc$major_vessels <- replace(data.num.chc$major_vessels, data.num.chc$major_vessels == 4, 3)
+data.num.chc$oldpeak <- replace(data.num.chc$oldpeak, data.num.chc$oldpeak == 4 | 
+                                  data.num.chc$oldpeak == 4.2 | data.num.chc$oldpeak == 4.4 | 
+                                  data.num.chc$oldpeak == 5.6 | data.num.chc$oldpeak == 6.2  ,4)
+
+# Vista de datos individuales
+
+x <- data.num.chc$oldpeak
+hist(x, breaks=15, main = "Dos variables", ylab = "Frecuencia")
+boxplot(x,data=heart.data, xlab="x", ylab="y")
+
+# Grafico de densidades individual
+
+plot_density(
+  data    = data.numeric,
+  ncol    = 3,
+  title   = "Distribución variables continuas",
+  ggtheme = theme_bw(),
+  theme_config = list(
+                  plot.title = element_text(size = 16, face = "bold"),
+                  strip.text = element_text(colour = "black", size = 12, face = 2)
+                 ))
+
+# Grafico de densidades individual despues de agrupamiento
+
+plot_density(
+  data    = data.num.chc,
+  ncol    = 3,
+  title   = "Distribución variables continuas",
+  ggtheme = theme_bw(),
+  theme_config = list(
+                  plot.title = element_text(size = 16, face = "bold"),
+                  strip.text = element_text(colour = "black", size = 12, face = 2)
+                 ))
+
+# Matriz de correlacion variables continuas
+
+plot_correlation(
+  data = data.num.chc,
+  type = "continuous",
+  title = "Matriz de correlación variables continuas",
+  theme_config = list(legend.position = "none",
+                      plot.title = element_text(size = 12, face = "bold"),
+                      axis.title = element_blank(),
+                      axis.text.x = element_text(angle = -45, hjust = +0.1)
+                     ))
+
+# Matriz de correlacion por pares
+
+GGally::ggscatmat(
+  data = data.numeric,
+  alpha = 0.1) +
+theme_bw() +
+labs(title = "Correlación por pares") +
+theme(
+  plot.title = element_text(size = 16, face = "bold"),
+  axis.text = element_blank(),
+  strip.text = element_text(colour = "black", size = 5, face = 1)
+)
+
+```
+```{r}
+
+# Evaluacion de varibales cualitativas
+
+data.factor <- heart.data %>% select(sex,cp,fbs,restecg,exang,slope,restwm)
+
+# Grafica de barras factores individuales
+
+plot_bar(
+  data.factor,
+  ncol    = 3,
+  title   = "Número de observaciones por grupo",
+  ggtheme = theme_bw(),
+  theme_config = list(
+                   plot.title = element_text(size = 16, face = "bold"),
+                   strip.text = element_text(colour = "black", size = 10, face = 2),
+                   legend.position = "none"
+                  ))
+
+# Agrupacion de factores
+
+data.factor.filtered <- data.factor %>% 
+  mutate(restecg = recode_factor(
+    restecg, 
+    `probable or definite left ventricular hypertrophy` = "normal"
+  )) %>% mutate(restwm = recode_factor(
+    restwm,
+    `mild or moderate` = "akinesis or dyskmem"
+  ))
+
+data.factor.filtered <- data.factor.filtered[!(data.factor.filtered$restwm == 'none'),]
+data.factor.filtered <- select(data.factor.filtered, -fbs)
+
+# Grafica de barras factores individuales despues de agrupamiento
+
+plot_bar(
+  data.factor.filtered,
+  ncol    = 3,
+  title   = "Número de observaciones por grupo",
+  ggtheme = theme_bw(),
+  theme_config = list(
+                   plot.title = element_text(size = 16, face = "bold"),
+                   strip.text = element_text(colour = "black", size = 10, face = 2),
+                   legend.position = "none"
+                  ))
+
+```
